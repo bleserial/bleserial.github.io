@@ -1,0 +1,195 @@
+<html>
+
+<script>
+  var connected = false;
+  var myDevice;
+  var myService;
+  var myRxCharacteristic;
+  var myTxCharacteristic;
+  var keyboard = false;
+  var count = 0;
+  var keytime = Date.now();
+  
+  function startup() {
+    var elem = document.getElementById("term");
+    elem.value = "BLE UART Terminal v1.0\r\n\r\nTap on the screen to discover nearby devices,\r\nor to show/hide the keyboard once connected.\r\n\r\nHit the space bar 3 times or refresh/reload the page to disconnect.\r\n\r\n"; 
+  }
+  
+  function connect() {
+    if(!connected)
+    {  
+      let serviceUuid = '85660001-5aee-11e7-907b-a6006ad3dba0';
+//      let rxCharacteristicUuid = "85660002-5AEE-11E7-907B-A6006AD3DBA0";
+//      let txCharacteristicUuid = "85660003-5AEE-11E7-907B-A6006AD3DBA0";
+      let rxCharacteristicUuid = '85660002-5aee-11e7-907b-a6006ad3dba0';
+      let txCharacteristicUuid = '85660003-5aee-11e7-907b-a6006ad3dba0';
+      navigator.bluetooth.requestDevice({
+        filters: [{
+//          services: ['5AEE-11E7-907B-A6006AD3DBA0']          
+          services: ['85660001-5aee-11e7-907b-a6006ad3dba0']
+        }]
+      })
+      .then(device => {
+        connected = true;
+        myDevice = device;
+        // Set up event listener for when device gets disconnected.
+        device.addEventListener('gattserverdisconnected', onDisconnected);
+        return device.gatt.connect();
+      })
+      .then(server => {
+        return server.getPrimaryService(serviceUuid);
+      })
+      .then(service => {
+        myService = service;
+        return service.getCharacteristic(txCharacteristicUuid);
+      })
+      .then(characteristic => {
+        myTxCharacteristic = characteristic;
+        return myService.getCharacteristic(rxCharacteristicUuid);
+      })
+      .then(characteristic => {
+        myRxCharacteristic = characteristic;
+        return myRxCharacteristic.startNotifications()
+          .then(_ => {
+          log("===== " + myDevice.name + " is connected =====\r\n");
+          myRxCharacteristic.addEventListener('characteristicvaluechanged',
+              handleNotifications);
+        });
+      })
+      .catch(error => {
+        console.log('Argh! ' + error);
+      });
+    }
+    else
+    {
+      if(keyboard)
+      {
+        keyboard = false;
+      }
+      else
+      {
+        keyboard = true;
+        count = 0;
+        document.getElementById("input").focus();
+      }
+    }
+    event.stopPropagation();
+    event.preventDefault();        
+  }
+  
+  function onDisconnected(event) {
+    connected = false;
+    log("\r\n===== " + myDevice.name + " is disconnected =====\r\n")
+  }
+  
+  function disconnect() {
+    log('disconnecting\r\n');
+    if (connected) {
+      if (myRxCharacteristic) {
+          myRxCharacteristic.removeEventListener('characteristicvaluechanged',
+              handleNotifications);
+      }
+      myDevice.gatt.disconnect();
+    }
+  }
+  
+  function handleNotifications(event) {
+    let value = event.target.value;
+    log( new TextDecoder().decode(value));
+    console.log('> Received: ' + new TextDecoder().decode(value));
+  }
+  
+  function myKeyPress(event) {
+    var x = event.charCode;
+    var buf = new ArrayBuffer(1); // 1 byte for each char
+    var bufView = new Uint8Array(buf);
+    bufView[0] = x;
+    log(String.fromCharCode(x));
+    if(connected) {
+      myTxCharacteristic.writeValue(buf);
+    }
+    document.getElementById("input").value = "";
+  }
+  
+  function myKeyDown(event) {
+    var x = event.keyCode;
+    var s = document.getElementById("input").value;
+    document.getElementById("input").value = "";
+    if(s.length>0) {
+      myTxCharacteristic.writeValue(Uint8Array.of(s.charCodeAt(0)));
+      if(s[0]==' ')
+      {
+        if(Date.now() - keytime < 1000)
+        {
+          count = count + 1;
+          if(count==3)
+          {
+            if(connected)
+            {
+              if (myRxCharacteristic) {
+                  myRxCharacteristic.removeEventListener('characteristicvaluechanged', handleNotifications);
+              }
+              myDevice.gatt.disconnect();
+            }
+          }
+        }
+        else
+          count = 1;
+        keytime = Date.now();
+      }
+      else
+        count = 0;
+    }  
+    else if (x==13) {
+      myTxCharacteristic.writeValue(Uint8Array.of(13, 10));
+    }
+    else if (x==8) {
+      myTxCharacteristic.writeValue(Uint8Array.of(8));
+    }
+    else if (x==9) {
+      myTxCharacteristic.writeValue(Uint8Array.of(9));
+    }
+  }
+  
+  function send() {
+    document.getElementById("input").focus();
+    //myTxCharacteristic.writeValue(str2ab(data))
+    //document.getElementById("input").value = "";
+    event.stopPropagation();
+    event.preventDefault();
+  }
+  
+  function str2ab(str) {
+    var buf = new ArrayBuffer(str.length); // 1 byte for each char
+    var bufView = new Uint8Array(buf);
+    for (var i=0, strLen=str.length; i<strLen; i++) {
+      bufView[i] = str.charCodeAt(i);
+    }
+    return buf;
+  }
+  function log(str) {
+    var elem = document.getElementById("term");
+    if(elem.textLength>10000)
+      elem.value = elem.value.substr(str.length) + str;
+    else
+      elem.value += str;
+    elem.scrollTop = elem.scrollHeight;
+  }
+  
+</script>
+
+<head>
+  <title>Web-Bluetooth Terminal</title>
+  <link rel="shortcut icon" href="favicon.ico" type="image/x-icon">
+  <link href="https://fonts.googleapis.com/css?family=Open+Sans" rel="stylesheet">
+  <link rel="stylesheet" type="text/css" href="style.css">
+  <link rel="stylesheet" href="https://www.w3schools.com/lib/w3.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+
+<body onload="startup()" onclick="connect()">
+  <div class="terminal"><textarea id="term" readonly spellcheck="false" class="terminal"></textarea></div>
+  <input id ="input" type="text" class="input" onkeyup="myKeyDown(event)"> 
+</body>
+</html>
